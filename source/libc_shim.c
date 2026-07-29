@@ -929,7 +929,9 @@ static void oc_commit_locked(void *addr, size_t len) {
     size_t run = 0;
     while (i + run < cnt && !oc_committed[first + i + run]) run++;
     if (oc_pool_bump + run > oc_pool_pages) {
-      debugPrintf("[oc] commit-pool EXHAUSTED: need %zu pages, %zu left (live %zu MB)\n",
+      debugPrintf("[oc] *** COMMIT-POOL EXHAUSTED *** raise OC_POOL_BYTES in config.h "
+                  "(and lower OVERCOMMIT_HEAP_MB by the same amount). "
+                  "need %zu pages, %zu left (live %zu MB)\n",
                   run, oc_pool_pages - oc_pool_bump, (oc_live_pages * MMAP_PAGE) >> 20);
       return;   // can't back; touching it would fault (shouldn't happen at pool size)
     }
@@ -1166,7 +1168,15 @@ void *mmap_fake(void *addr, size_t length, int prot, int flags, int fd, long off
     // (> newlib free) will fail, and we log that distinctly.
     void *q = mmap_fallback(length, flags, fd, offset);
     if (q) return q;
-    debugPrintf("[mmap] arena FULL and newlib fallback FAILED for %u MB (out of RAM)\n",
+    /* Loud and unmistakable: this is the point where the game is about to be
+     * handed a failure it probably does not check. A caller that ignores
+     * MAP_FAILED (or a malloc that fails just after this) dereferences the
+     * result and takes a Data Abort at address 0 -- which reads, in a crash
+     * report, like a mysterious NULL deref deep in engine code rather than the
+     * out-of-memory condition it actually is. Say so here, while we still know. */
+    debugPrintf("[mmap] *** OUT OF MEMORY *** arena FULL and newlib fallback FAILED "
+                "for %u MB. Raise OC_POOL_BYTES in config.h. A NULL/MAP_FAILED "
+                "dereference in the engine is the likely next event.\n",
                 (unsigned)(length >> 20));
     errno = ENOMEM; return (void *)-1;
   }

@@ -33,7 +33,26 @@
 // heap bump-pool. Heap-backed arena (1792MB) + OC window (1280MB) = 12x256MB
 // blocks of reservation address space for Unity, but only ~80MB real commits.
 #define OC_WINDOW_BYTES     ((size_t)1536 * 1024 * 1024)  // 24x64MB blocks of cheap PROT_NONE reservation in the stack hole
-#define OC_POOL_BYTES       ((size_t) 256 * 1024 * 1024)  // commit-pool: only touched pages backed (~80MB observed) + headroom
+/* Commit-pool: real memory backing the pages the engine actually touches.
+ *
+ * Raised from the base's 256 MB, which was sized for ITS game ("~80MB observed").
+ * That number does not transfer. Papers, Please decodes its art out of a
+ * TextAsset blob into uncompressed RGBA Image buffers and keeps them in its own
+ * cache (HostUnity.CachedTexture, evicted by lastUsedFrame) -- so its working set
+ * GROWS during a session as more documents, stamps and portraits get touched,
+ * rather than sitting flat the way a pre-baked scene does.
+ *
+ * That is consistent with the reported failure: boots and plays fine, then dies
+ * partway into a session with a NULL dereference immediately after an allocation
+ * call returned. malloc/mmap handing back NULL under pressure, dereferenced
+ * unchecked, is exactly that crash shape.
+ *
+ * 640 MB against a 608 MB newlib heap fits the same physical budget the base
+ * used; we are moving headroom from "reserved but unused" into the pool that
+ * actually ran out. If you see "[oc] commit-pool EXHAUSTED" in debug.log, raise
+ * this further and drop OVERCOMMIT_HEAP_MB by the same amount -- the log names
+ * which side ran out, so you never have to guess. */
+#define OC_POOL_BYTES       ((size_t) 640 * 1024 * 1024)
 
 // Overcommit (alias-region) mode: Unity reserves multi-GB of 256MB pools with
 // mmap(PROT_NONE) and commits only the sub-ranges it touches via mprotect. On a
@@ -47,10 +66,6 @@
 // The rest of the physical limit is freed for on-demand commits. 2MB-aligned.
 #define OVERCOMMIT_HEAP_MB  608u
 
-// Chaos Rings 3 (Android, com.square_enix.chaosrings3gp v1.1.4) ships the real
-// engine as libcrx.so (Media.Vision "MVGL"). Unlike FF4 it is a NativeActivity
-// game (android_main / ANativeActivity_onCreate) and pulls its C++ runtime from
-// libc++_shared.so, so the wrapper loads BOTH shared objects.
 /* Papers, Please ships the standard modern Unity trio: libmain.so dlopens
  * libunity.so which dlopens libil2cpp.so. There is NO lib_burst_generated.so --
  * the game uses no Burst jobs, so unlike the PvZ Fusion and CloverPit ports you
